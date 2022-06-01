@@ -1562,7 +1562,11 @@ void cgroup_kn_unlock(struct kernfs_node *kn)
 	mutex_unlock(&cgroup_mutex);
 
 	kernfs_unbreak_active_protection(kn);
-	cgroup_put(cgrp);
+
+printk("!!!!! cgroup_kn_unlock css %llx flags %x !!!\n", &cgrp->self, cgrp->self.flags);
+	//if (!percpu_ref_is_dying(&cgrp->self.refcnt))
+	if (!(cgrp->self.flags & CSS_RELEASING))
+		cgroup_put(cgrp);
 }
 
 /**
@@ -5107,9 +5111,13 @@ static void css_release(struct percpu_ref *ref)
 {
 	struct cgroup_subsys_state *css =
 		container_of(ref, struct cgroup_subsys_state, refcnt);
-
-	INIT_WORK(&css->destroy_work, css_release_work_fn);
-	queue_work(cgroup_destroy_wq, &css->destroy_work);
+printk("!!!!! css_release css %llx !!!\n", css);
+	if (!(css->flags & CSS_RELEASING)) {
+printk("!!!!! css_releasing now css %llx !!!\n", css);
+		css->flags |= CSS_RELEASING;
+		INIT_WORK(&css->destroy_work, css_release_work_fn);
+		queue_work(cgroup_destroy_wq, &css->destroy_work);
+	}
 }
 
 static void init_and_link_css(struct cgroup_subsys_state *css,
@@ -5477,6 +5485,8 @@ static void css_killed_ref_fn(struct percpu_ref *ref)
 		container_of(ref, struct cgroup_subsys_state, refcnt);
 
 	if (atomic_dec_and_test(&css->online_cnt)) {
+printk("!!!!! css_killed_ref_fn css %llx !!!\n", css);
+		css->flags |= CSS_RELEASING;
 		INIT_WORK(&css->destroy_work, css_killed_work_fn);
 		queue_work(cgroup_destroy_wq, &css->destroy_work);
 	}

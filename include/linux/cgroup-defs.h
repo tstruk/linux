@@ -53,6 +53,7 @@ enum {
 	CSS_RELEASED	= (1 << 2), /* refcnt reached zero, released */
 	CSS_VISIBLE	= (1 << 3), /* css is visible to userland */
 	CSS_DYING	= (1 << 4), /* css is dying */
+	CSS_RELEASING	= (1 << 5), /* css is being released */
 };
 
 /* bits in struct cgroup flags field */
