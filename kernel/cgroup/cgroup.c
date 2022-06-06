@@ -958,6 +958,8 @@ void put_css_set_locked(struct css_set *cset)
 	/* This css_set is dead. unlink it and release cgroup and css refs */
 	for_each_subsys(ss, ssid) {
 		list_del(&cset->e_cset_node[ssid]);
+
+	printk("!!!! put_css_set_locked css_put(%llx) \n", cset->subsys[ssid]);
 		css_put(cset->subsys[ssid]);
 	}
 	hash_del(&cset->hlist);
@@ -966,8 +968,10 @@ void put_css_set_locked(struct css_set *cset)
 	list_for_each_entry_safe(link, tmp_link, &cset->cgrp_links, cgrp_link) {
 		list_del(&link->cset_link);
 		list_del(&link->cgrp_link);
-		if (cgroup_parent(link->cgrp))
+		if (cgroup_parent(link->cgrp)) {
+	printk("!!!! put_css_set_locked cgroup_put(self %llx) \n", &link->cgrp->self);
 			cgroup_put(link->cgrp);
+		}
 		kfree(link);
 	}
 
@@ -1581,6 +1585,7 @@ void cgroup_kn_unlock(struct kernfs_node *kn)
 	mutex_unlock(&cgroup_mutex);
 
 	kernfs_unbreak_active_protection(kn);
+	printk("!!!! cgroup_kn_unlock css_put(%llx) \n", &cgrp->self);
 	cgroup_put(cgrp);
 }
 
@@ -3153,12 +3158,14 @@ static void cgroup_apply_control_disable(struct cgroup *cgrp)
 				continue;
 
 			WARN_ON_ONCE(percpu_ref_is_dying(&css->refcnt));
-
+printk("!!!! control_disable control_disable ss name %s\n", ss->name);
 			if (css->parent &&
 			    !(cgroup_ss_mask(dsct) & (1 << ss->id))) {
+				printk("!!!! control_disable kill_css(%llx) \n", css);
 				kill_css(css);
 			} else if (!css_visible(css)) {
 				css_clear_dir(css);
+				printk("!!!! control_disable css_reset(%llx) \n", css);
 				if (ss->css_reset)
 					ss->css_reset(css);
 			}
@@ -5041,6 +5048,8 @@ static void css_free_rwork_fn(struct work_struct *work)
 
 	percpu_ref_exit(&css->refcnt);
 
+
+	printk("!!!! css_free_rwork_fn(%llx) \n", css);
 	if (ss) {
 		/* css free path */
 		struct cgroup_subsys_state *parent = css->parent;
@@ -5050,8 +5059,9 @@ static void css_free_rwork_fn(struct work_struct *work)
 		cgroup_idr_remove(&ss->css_idr, id);
 		cgroup_put(cgrp);
 
-		if (parent)
+		if (parent) {
 			css_put(parent);
+		}
 	} else {
 		/* cgroup free path */
 		atomic_dec(&cgrp->root->nr_cgrps);
@@ -5094,6 +5104,7 @@ static void css_release_work_fn(struct work_struct *work)
 	css->flags |= CSS_RELEASED;
 	list_del_rcu(&css->sibling);
 
+	printk("!!!! css_release_work_fn(%llx) \n", css);
 	if (ss) {
 		/* css release path */
 		if (!list_empty(&css->rstat_css_node)) {
@@ -5142,6 +5153,7 @@ static void css_release(struct percpu_ref *ref)
 	struct cgroup_subsys_state *css =
 		container_of(ref, struct cgroup_subsys_state, refcnt);
 
+	printk("!!!! css_release enqueue(%llx) \n", css);
 	INIT_WORK(&css->destroy_work, css_release_work_fn);
 	queue_work(cgroup_destroy_wq, &css->destroy_work);
 }
@@ -5234,6 +5246,7 @@ static struct cgroup_subsys_state *css_create(struct cgroup *cgrp,
 	lockdep_assert_held(&cgroup_mutex);
 
 	css = ss->css_alloc(parent_css);
+	printk("!!!! css_create css %llx !!!!\n", css);
 	if (!css)
 		css = ERR_PTR(-ENOMEM);
 	if (IS_ERR(css))
@@ -5273,6 +5286,7 @@ err_list_del:
 	list_del_rcu(&css->sibling);
 err_free_css:
 	list_del_rcu(&css->rstat_css_node);
+	printk("!!!! css_create rcu_enqueue(%llx) !!!!\n", css);
 	INIT_RCU_WORK(&css->destroy_rwork, css_free_rwork_fn);
 	queue_rcu_work(cgroup_destroy_wq, &css->destroy_rwork);
 	return ERR_PTR(err);
@@ -5495,6 +5509,7 @@ static void css_killed_work_fn(struct work_struct *work)
 	mutex_lock(&cgroup_mutex);
 
 	do {
+	printk("!!!! css_killed_work_fn css_put(%llx) \n", css);
 		offline_css(css);
 		css_put(css);
 		/* @css can't go away while we're holding cgroup_mutex */
@@ -5511,6 +5526,7 @@ static void css_killed_ref_fn(struct percpu_ref *ref)
 		container_of(ref, struct cgroup_subsys_state, refcnt);
 
 	if (atomic_dec_and_test(&css->online_cnt)) {
+	printk("!!!! css_killed_ref_fn enqueue(%llx) \n", css);
 		INIT_WORK(&css->destroy_work, css_killed_work_fn);
 		queue_work(cgroup_destroy_wq, &css->destroy_work);
 	}
@@ -5527,6 +5543,8 @@ static void css_killed_ref_fn(struct percpu_ref *ref)
  */
 static void kill_css(struct cgroup_subsys_state *css)
 {
+	struct cgroup_subsys_state *_css = css;
+
 	lockdep_assert_held(&cgroup_mutex);
 
 	if (css->flags & CSS_DYING)
@@ -5541,10 +5559,14 @@ static void kill_css(struct cgroup_subsys_state *css)
 	css_clear_dir(css);
 
 	/*
-	 * Killing would put the base ref, but we need to keep it alive
-	 * until after ->css_offline().
+	 * Killing would put the base ref, but we need to keep it alive,
+	 * and all its parents, until after ->css_offline().
 	 */
-	css_get(css);
+	do {
+		printk("!!!! IN kill css_get(%llx) \n", css);
+		css_get(_css);
+		_css = _css->parent;
+	} while (_css && atomic_read(&_css->online_cnt));
 
 	/*
 	 * cgroup core guarantees that, by the time ->css_offline() is
@@ -6602,6 +6624,7 @@ void cgroup_sk_free(struct sock_cgroup_data *skcd)
 	if (skcd->no_refcnt)
 		return;
 	cgroup_bpf_put(cgrp);
+printk("!!!! cgroup_sk_free cgroup_put(css %llx)\n", &cgrp->self);
 	cgroup_put(cgrp);
 }
 
