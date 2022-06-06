@@ -1592,6 +1592,7 @@ void cgroup_kn_unlock(struct kernfs_node *kn)
 	mutex_unlock(&cgroup_mutex);
 
 	kernfs_unbreak_active_protection(kn);
+	printk("!!!! cgroup_kn_unlock css_put(%llx) \n", &cgrp->self);
 	cgroup_put(cgrp);
 }
 
@@ -3170,6 +3171,8 @@ static void cgroup_apply_control_disable(struct cgroup *cgrp)
 
 			if (css->parent &&
 			    !(cgroup_ss_mask(dsct) & (1 << ss->id))) {
+				if (&cgrp->self == css)
+					printk("!!!! control_disable kill_css(%llx) \n", css);
 				kill_css(css);
 			} else if (!css_visible(css)) {
 				css_clear_dir(css);
@@ -5210,6 +5213,7 @@ static void css_release(struct percpu_ref *ref)
 	struct cgroup_subsys_state *css =
 		container_of(ref, struct cgroup_subsys_state, refcnt);
 
+	printk("!!!! css_release kill_css(%llx) \n", css);
 	INIT_WORK(&css->destroy_work, css_release_work_fn);
 	queue_work(cgroup_destroy_wq, &css->destroy_work);
 }
